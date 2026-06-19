@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Browser Agent WebUI</title>
 <style>
   :root {
@@ -19,14 +19,11 @@
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg); color: var(--text);
     min-height: 100vh;
   }
-
   .app { display: flex; flex-direction: column; height: 100vh; }
-
-  /* Header */
   header {
     padding: 0 1.5rem; height: 56px;
     display: flex; align-items: center; justify-content: space-between;
@@ -41,14 +38,11 @@
   .status-dot.warning { background: var(--warning); }
   .status-dot.error-dot { background: var(--red); }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-  /* Main layout */
   .main { display: flex; flex: 1; overflow: hidden; }
-
-  /* Browser viewport */
   .viewport {
     flex: 1; display: flex; flex-direction: column;
     border-right: 1px solid var(--border);
+    min-width: 0;
   }
   .viewport-header {
     padding: 0.5rem 1rem; font-size: 11px;
@@ -60,7 +54,7 @@
     flex: 1; padding: 4px 8px; border-radius: 4px;
     background: var(--surface-2); font-size: 11px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-family: 'SF Mono', 'JetBrains Mono', monospace;
+    font-family: "SF Mono", "JetBrains Mono", monospace;
   }
   .viewport-screen {
     flex: 1; position: relative; overflow: hidden;
@@ -68,465 +62,353 @@
   }
   .viewport-screen img {
     width: 100%; height: 100%; object-fit: contain;
-    display: block;
+    display: block; opacity: 0;
+    transition: opacity 0.25s ease;
   }
+  .viewport-screen img.loaded { opacity: 1; }
   .viewport-screen .placeholder {
+    position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    height: 100%; flex-direction: column; gap: 16px;
+    flex-direction: column; gap: 16px;
     color: var(--text-sec); font-size: 14px;
   }
   .viewport-screen .placeholder .big { font-size: 48px; }
-
-  /* Side panel */
-  .side {
+  .viewport-screen .loading-overlay {
+    position: absolute; bottom: 16px; right: 16px;
+    width: 32px; height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: none; z-index: 10;
+  }
+  .viewport-screen .loading-overlay.active { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .panel {
     width: 400px; display: flex; flex-direction: column;
     background: var(--surface);
   }
-  .side-header {
-    padding: 0.75rem 1rem; font-size: 12px; font-weight: 600;
-    color: var(--text-sec); border-bottom: 1px solid var(--border);
-    display: flex; justify-content: space-between; align-items: center;
+  .panel-tabs {
+    display: flex; border-bottom: 1px solid var(--border);
   }
-  .clear-btn {
-    background: none; border: 1px solid var(--border); color: var(--text-sec);
-    padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;
+  .panel-tabs button {
+    flex: 1; padding: 10px; border: none; background: transparent;
+    color: var(--text-sec); cursor: pointer; font-size: 13px;
+    font-family: inherit; transition: all 0.15s;
+    border-bottom: 2px solid transparent;
   }
-  .clear-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-  .thinking-log {
-    flex: 1; overflow-y: auto; padding: 0.75rem;
-    display: flex; flex-direction: column; gap: 8px;
-  }
-  .log-entry {
-    padding: 8px 10px; border-radius: 8px;
-    background: var(--surface-2); font-size: 12px;
-    border-left: 3px solid var(--accent);
-  }
-  .log-entry .thought { color: var(--text); line-height: 1.6; margin-bottom: 4px; }
-  .log-entry .action {
-    color: var(--text-sec); font-size: 11px;
-    font-family: 'SF Mono', monospace;
-  }
-  .log-entry .obs {
-    color: var(--accent); font-size: 11px;
-    margin-top: 4px; word-break: break-all;
-  }
-  .log-entry.error { border-left-color: var(--red); }
-  .log-entry.warning-entry { border-left-color: var(--warning); }
-
-  /* Input area */
+  .panel-tabs button:hover { color: var(--text); }
+  .panel-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .panel-content { flex: 1; overflow-y: auto; display: none; }
+  .panel-content.active { display: block; }
   .input-area {
-    padding: 0.75rem 1rem; border-top: 1px solid var(--border);
-    display: flex; gap: 8px; align-items: flex-end;
-    background: var(--surface);
+    padding: 1rem; border-bottom: 1px solid var(--border);
   }
   .input-area textarea {
-    flex: 1; background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 12px; color: var(--text);
-    font-size: 13px; resize: none; outline: none; font-family: inherit;
-    min-height: 40px; max-height: 100px; line-height: 1.5;
-  }
-  .input-area textarea:focus { border-color: var(--accent); }
-  .input-area textarea::placeholder { color: var(--text-sec); }
-  .btn-run {
-    padding: 10px 20px; border: none; border-radius: 8px;
-    background: var(--accent); color: white; font-weight: 600;
-    font-size: 13px; cursor: pointer; transition: all 0.2s;
-    white-space: nowrap;
-  }
-  .btn-run:hover { opacity: 0.9; }
-  .btn-run:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-run.used { background: var(--warning); }
-  .btn-stop { background: var(--red); }
-
-  /* Settings */
-  .settings-bar {
-    padding: 0.5rem 1rem; border-bottom: 1px solid var(--border);
-    display: flex; gap: 8px; align-items: center;
-    flex-wrap: wrap;
-    background: var(--surface); font-size: 12px;
-  }
-  .settings-bar input, .settings-bar select {
+    width: 100%; min-height: 80px; padding: 12px;
     background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 4px; padding: 4px 8px; color: var(--text);
-    font-size: 11px; outline: none; font-family: inherit;
+    color: var(--text); border-radius: 8px; resize: vertical;
+    font-size: 13px; line-height: 1.5;
+    font-family: inherit;
   }
-  .settings-bar input:focus, .settings-bar select:focus { border-color: var(--accent); }
-  .settings-bar label { color: var(--text-sec); white-space: nowrap; }
-  .free-badge {
-    display: inline-flex; align-items: center; gap: 4px;
-    background: rgba(34,197,94,0.15); color: var(--green);
-    padding: 2px 8px; border-radius: 10px; font-size: 11px;
-    font-weight: 600;
+  .input-area textarea:focus { outline: none; border-color: var(--accent); }
+  .input-area textarea::placeholder { color: var(--text-sec); }
+  .input-row {
+    display: flex; gap: 8px; margin-top: 8px; align-items: center;
   }
-  .free-badge.exhausted {
-    background: rgba(239,68,68,0.15); color: var(--red);
+  .input-row input, .input-row select {
+    padding: 6px 10px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); font-size: 12px; font-family: inherit;
   }
-  .hint-text {
-    font-size: 10px; color: var(--text-sec);
-    margin-top: 2px;
+  .input-row input:focus, .input-row select:focus { outline: none; border-color: var(--accent); }
+  .input-row input { flex: 1; }
+  .input-row select { width: 130px; }
+  .run-btn {
+    padding: 8px 20px; background: var(--accent); color: #fff;
+    border: none; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 600; transition: opacity 0.15s;
+    font-family: inherit; white-space: nowrap;
   }
-
+  .run-btn:hover { opacity: 0.85; }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .run-btn.stop { background: var(--red); }
+  .log-area { padding: 0.75rem; }
+  .log-entry {
+    padding: 8px 10px; margin-bottom: 6px;
+    border-radius: 6px; font-size: 12px; line-height: 1.5;
+    background: var(--surface-2); border-left: 3px solid var(--border);
+    animation: fadeIn 0.2s ease;
+  }
+  .log-entry.log-think { border-left-color: var(--accent); }
+  .log-entry.log-action { border-left-color: var(--warning); }
+  .log-entry.log-error { border-left-color: var(--red); background: #2a1020; }
+  .log-entry.log-result { border-left-color: var(--green); }
+  .log-thought { color: var(--text); }
+  .log-action-name { color: var(--warning); font-weight: 600; }
+  .log-obs { color: var(--text-sec); margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
+  .log-result-text { color: var(--green); }
+  .log-error-text { color: var(--red); }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .clear-btn {
+    padding: 4px 12px; background: transparent; border: 1px solid var(--border);
+    border-radius: 4px; color: var(--text-sec); cursor: pointer; font-size: 11px; font-family: inherit;
+  }
+  .clear-btn:hover { color: var(--text); border-color: var(--text-sec); }
+  .log-header { display: flex; justify-content: space-between; align-items: center; padding: 0 0.75rem 0.5rem; }
+  .free-hint { font-size: 11px; color: var(--warning); }
   @media (max-width: 768px) {
     .main { flex-direction: column; }
-    .side { width: 100%; max-height: 40vh; }
-    .viewport-screen { min-height: 40vh; }
+    .panel { width: 100%; max-height: 50vh; }
+    .viewport { min-height: 50vh; }
   }
 </style>
 </head>
 <body>
-
 <div class="app">
   <header>
-    <div class="logo">🌐 <span>Browser Agent</span> <span style="font-weight:400;font-size:12px;color:var(--text-sec)">WebUI</span></div>
+    <div class="logo">🌐 <span>Browser Agent</span></div>
     <div class="status">
       <span class="status-dot" id="statusDot"></span>
-      <span id="statusText">Ready</span>
-      <span class="free-badge" id="freeBadge">🎁 免费 5/5</span>
+      <span id="statusText">就绪</span>
+      <span class="free-hint" id="freeHint"></span>
     </div>
   </header>
-
-  <!-- Settings -->
-    <div style="padding:2px 1rem;background:var(--surface);font-size:10px;color:var(--text-sec);display:flex;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--border);">
-    <span>🔒 你的 API Key 仅用于本次请求，直接传到模型端，我们<strong>不会存储</strong>也<strong>看不到</strong>你的 Key</span>
-  </div>
-<div class="settings-bar">
-    <label>API Key</label>
-    <input type="password" id="apiKey" placeholder="留空 = 免费试用（限5次）" style="width:220px" />
-    <label>Model</label>
-    <select id="model">
-      <option value="deepseek-chat">DeepSeek V3（默认）</option>
-      <option value="gpt-4o">GPT-4o</option>
-      <option value="gpt-4o-mini">GPT-4o Mini</option>
-      <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-      <option value="qwen-plus">Qwen Plus</option>
-    </select>
-  </div>
-
   <div class="main">
-    <!-- Browser viewport -->
     <div class="viewport">
       <div class="viewport-header">
-        <span>📍</span>
+        <span>🌍</span>
         <span class="viewport-url" id="currentUrl">about:blank</span>
       </div>
       <div class="viewport-screen" id="viewportScreen">
         <div class="placeholder" id="placeholder">
           <div class="big">🌐</div>
           <div>输入任务，点击运行</div>
-          <div style="font-size:12px">Agent 将操控浏览器完成任务</div>
+          <div style="font-size:11px">浏览器将自动执行操作</div>
         </div>
         <img id="screenshotImg" style="display:none" />
+        <div class="loading-overlay" id="loadingOverlay"></div>
       </div>
     </div>
-
-    <!-- Side panel -->
-    <div class="side">
-      <div class="side-header">
-        <span>🧠 Agent Thinking</span>
-        <button class="clear-btn" onclick="clearLog()">Clear</button>
-      </div>
-      <div class="thinking-log" id="thinkingLog"></div>
-
+    <div class="panel">
       <div class="input-area">
-        <textarea id="taskInput" rows="2"
-          placeholder='例如：帮我搜索"2024年诺贝尔奖获得者"并整理成列表...'
-          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runTask()}"></textarea>
-        <button class="btn-run" id="runBtn" onclick="runTask()">▶ Run</button>
-        <button class="btn-run btn-stop" id="stopBtn" onclick="stopTask()" style="display:none">■ Stop</button>
+        <textarea id="taskInput" rows="3" placeholder='例如：帮我搜索"2024年诺贝尔奖获得者"并整理成列表...'></textarea>
+        <div class="input-row">
+          <select id="modelSelect">
+            <option value="deepseek-chat">DeepSeek</option>
+            <option value="gpt-4o-mini">GPT-4o-mini</option>
+            <option value="qwen-plus">通义千问+</option>
+            <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+          </select>
+          <input type="password" id="apiKey" placeholder="留空 = 免费试用" style="width:140px" />
+          <button class="run-btn" id="runBtn" onclick="runTask()">▶ 运行</button>
+        </div>
+      </div>
+      <div class="panel-tabs">
+        <button class="active" onclick="switchTab('log')">📋 操作日志</button>
+        <button onclick="switchTab('config')">⚙️ 配置</button>
+      </div>
+      <div class="panel-content active" id="logTab">
+        <div class="log-header">
+          <span id="logFreeHint" class="free-hint"></span>
+          <button class="clear-btn" onclick="clearLog()">清空</button>
+        </div>
+        <div class="log-area" id="thinkingLog"></div>
+      </div>
+      <div class="panel-content" id="configTab" style="padding:1rem;font-size:12px;color:var(--text-sec)">
+        <p>浏览器内核: Playwright (Chromium, headless)</p>
+        <p>模型: <span id="configModel">DeepSeek</span></p>
+        <p>搜索引擎: Bing + DuckDuckGo + 百度</p>
+        <p>知识源: 百度百科 · 中文维基百科</p>
+        <hr style="border-color:var(--border);margin:12px 0">
+        <p>💡 提示</p>
+        <p style="margin-top:6px">- 搜索类任务会先走搜索引擎，无需浏览器开网页</p>
+        <p>- 如需登录操作需自行提供 API Key</p>
       </div>
     </div>
   </div>
 </div>
 
+<img id="screenshotPreload" style="display:none" />
 <script>
-  // ── Model → Base URL 映射 ──────────────────
-  const MODEL_BASE_URLS = {
-    'gpt-4o':             'https://api.openai.com/v1',
-    'gpt-4o-mini':        'https://api.openai.com/v1',
-    'claude-sonnet-4-20250514': 'https://api.anthropic.com/v1',
-    'deepseek-chat':      'https://api.deepseek.com/v1',
-    'qwen-plus':          'https://dashscope.aliyuncs.com/compatible-mode/v1',
+const MODEL_BASE_URLS = {
+  "deepseek-chat":      "https://api.deepseek.com/v1",
+  "gpt-4o-mini":        "https://api.openai.com/v1",
+  "gpt-4o":             "https://api.openai.com/v1",
+  "claude-sonnet-4-20250514": "https://api.anthropic.com/v1",
+  "qwen-plus":          "https://dashscope.aliyuncs.com/compatible-mode/v1",
+};
+const taskInput = document.getElementById("taskInput");
+const runBtn = document.getElementById("runBtn");
+const thinkingLog = document.getElementById("thinkingLog");
+const currentUrl = document.getElementById("currentUrl");
+const placeholder = document.getElementById("placeholder");
+const screenshotImg = document.getElementById("screenshotImg");
+const screenshotPreload = document.getElementById("screenshotPreload");
+const loadingOverlay = document.getElementById("loadingOverlay");
+const modelSelect = document.getElementById("modelSelect");
+const apiKeyInput = document.getElementById("apiKey");
+const statusDot = document.getElementById("statusDot");
+const statusText = document.getElementById("statusText");
+const freeHint = document.getElementById("freeHint");
+const logFreeHint = document.getElementById("logFreeHint");
+let eventSource = null;
+let sessionId = null;
+let isRunning = false;
+let freeRemaining = 5;
+let lastScreenshot = "";
+
+if (localStorage.getItem("baw_apiKey")) apiKeyInput.value = localStorage.getItem("baw_apiKey");
+if (localStorage.getItem("baw_model")) modelSelect.value = localStorage.getItem("baw_model");
+function saveConfig() {
+  localStorage.setItem("baw_apiKey", apiKeyInput.value);
+  localStorage.setItem("baw_model", modelSelect.value);
+}
+function setStatus(text, active) {
+  statusText.textContent = text;
+  statusDot.className = "status-dot" + (active ? " active" : "");
+}
+function updateFreeHint() {
+  const hint = freeRemaining > 0 ? "\u{1F381}" + "免费试用剩余 " + freeRemaining + " 次" : "";
+  freeHint.textContent = hint;
+  logFreeHint.textContent = hint;
+}
+function switchTab(name) {
+  document.querySelectorAll(".panel-tabs button").forEach(b => b.classList.remove("active"));
+  document.querySelectorAll(".panel-content").forEach(p => p.classList.remove("active"));
+  if (name === "log") {
+    document.querySelectorAll(".panel-tabs button")[0].classList.add("active");
+    document.getElementById("logTab").classList.add("active");
+  } else {
+    document.querySelectorAll(".panel-tabs button")[1].classList.add("active");
+    document.getElementById("configTab").classList.add("active");
+  }
+  document.getElementById("configModel").textContent = modelSelect.options[modelSelect.selectedIndex].text;
+}
+modelSelect.onchange = function() {
+  document.getElementById("configModel").textContent = modelSelect.options[modelSelect.selectedIndex].text;
+};
+function addLog(data) {
+  const el = document.createElement("div");
+  const t = data.type || "";
+  const thought = data.thought || "";
+  const action = data.action || "";
+  const obs = data.observation || "";
+  let cls = "log-entry";
+  if (t === "error") cls += " log-error";
+  else if (action === "done") cls += " log-result";
+  else if (thought && !action) cls += " log-think";
+  let html = "";
+  if (thought) html += '<div class="log-thought">' + thought + '</div>';
+  if (action) html += '<div class="log-action-name">\u{1F527} ' + action + ' ' + JSON.stringify(data.params || {}) + '</div>';
+  if (obs) {
+    if (action === "done") html += '<div class="log-result-text">' + obs + '</div>';
+    else if (t === "error") html += '<div class="log-error-text">' + obs + '</div>';
+    else html += '<div class="log-obs">' + obs.substring(0, 500) + '</div>';
+  }
+  el.className = cls;
+  el.innerHTML = html;
+  thinkingLog.appendChild(el);
+  el.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+function clearLog() { thinkingLog.innerHTML = ""; }
+
+function updateScreenshot(base64Data) {
+  if (!base64Data) return;
+  if (base64Data === lastScreenshot) return;
+  lastScreenshot = base64Data;
+  screenshotPreload.onload = function() {
+    screenshotImg.src = screenshotPreload.src;
+    screenshotImg.style.display = "block";
+    screenshotImg.classList.add("loaded");
+    placeholder.style.display = "none";
   };
+  screenshotPreload.src = "data:image/png;base64," + base64Data;
+}
 
-  // ── State ────────────────────────────────────────
-  let sessionId = null;
-  let isRunning = false;
-  let eventSource = null;
-  let freeRemaining = 5;
-
-  // ── DOM refs ─────────────────────────────────────
-  const statusDot = document.getElementById('statusDot');
-  const statusText = document.getElementById('statusText');
-  const freeBadge = document.getElementById('freeBadge');
-  const viewportScreen = document.getElementById('viewportScreen');
-  const placeholder = document.getElementById('placeholder');
-  const screenshotImg = document.getElementById('screenshotImg');
-  const currentUrl = document.getElementById('currentUrl');
-  const thinkingLog = document.getElementById('thinkingLog');
-  const taskInput = document.getElementById('taskInput');
-  const runBtn = document.getElementById('runBtn');
-  const apiKeyInput = document.getElementById('apiKey');
-  const modelSelect = document.getElementById('model');
-
-  // ── Load saved config ────────────────────────────
+async function runTask() {
+  const task = taskInput.value.trim();
+  if (!task || isRunning) return;
+  saveConfig();
+  const apiKey = apiKeyInput.value.trim();
+  clearLog();
+  placeholder.style.display = "flex";
+  screenshotImg.style.display = "none";
+  screenshotImg.classList.remove("loaded");
+  currentUrl.textContent = "starting...";
+  lastScreenshot = "";
+  isRunning = true;
+  runBtn.disabled = true;
+  runBtn.textContent = "\u23F3 Running...";
+  setStatus("Running...", true);
   try {
-    const saved = JSON.parse(localStorage.getItem('browserAgentConfig') || '{}');
-    if (saved.apiKey) apiKeyInput.value = saved.apiKey;
-    if (saved.model) modelSelect.value = saved.model;
-  } catch(e) {}
-
-  function saveConfig() {
-    localStorage.setItem('browserAgentConfig', JSON.stringify({
-      apiKey: apiKeyInput.value,
-      model: modelSelect.value,
-    }));
-  }
-
-  // 切换模型时自动更新提示
-  modelSelect.addEventListener('change', () => {
     const model = modelSelect.value;
-    const url = MODEL_BASE_URLS[model] || 'https://api.deepseek.com/v1';
-    // 保存配置
-    saveConfig();
-    // 如果没填 Key，提示是否免费
-    updateFreeHint();
-  });
-
-  apiKeyInput.addEventListener('input', updateFreeHint);
-
-  function updateFreeHint() {
-    const hasKey = apiKeyInput.value.trim().length > 0;
-    if (hasKey) {
-      freeBadge.textContent = '🔑 使用自己的 Key';
-      freeBadge.className = 'free-badge';
-    } else {
-      freeBadge.textContent = `🎁 免费 ${freeRemaining}/5`;
-      freeBadge.className = 'free-badge' + (freeRemaining <= 0 ? ' exhausted' : '');
+    const baseUrl = MODEL_BASE_URLS[model] || "https://api.deepseek.com/v1";
+    const startRes = await fetch("/browser-agent/api/start", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: task, api_key: apiKey, base_url: baseUrl, model: model, headless: true }),
+    });
+    if (!startRes.ok) {
+      let errMsg = "请求失败";
+      try { const errData = await startRes.json(); errMsg = typeof errData.detail === "object" ? (errData.detail.message || JSON.stringify(errData.detail)) : (errData.detail || errMsg); } catch(e) { errMsg = "\u670D\u52A1\u5668\u9519\u8BEF (" + startRes.status + ")"; }
+      addLog({ type: "error", thought: errMsg }); finishRun(); return;
     }
-  }
-
-  // ── 查询剩余次数 ──────────────────────────────
-  async function checkFreeRemaining() {
-    try {
-      const res = await fetch('/browser-agent/api/rate-limit');
-      if (res.ok) {
-        const data = await res.json();
-        freeRemaining = data.remaining || 0;
-        updateFreeHint();
-        if (freeRemaining <= 0 && !apiKeyInput.value.trim()) {
-          addLog({
-            type: 'warning',
-            thought: '⚠️ 免费试用次数已用完！请在上方输入你的 API Key 继续使用。'
-          });
-        }
-      }
-    } catch(e) {
-      // silently ignore
-    }
-  }
-
-  // ── Status ───────────────────────────────────────
-  function setStatus(text, active, type) {
-    statusText.textContent = text;
-    statusDot.className = 'status-dot';
-    if (active) {
-      if (type === 'error') statusDot.className += ' error-dot';
-      else if (type === 'warning') statusDot.className += ' warning';
-      else statusDot.className += ' active';
-    }
-  }
-
-  // ── Add log entry ────────────────────────────────
-  function addLog(data) {
-    const el = document.createElement('div');
-    el.className = 'log-entry';
-    if (data.type === 'error') el.className += ' error';
-    if (data.type === 'warning') el.className += ' warning-entry';
-
-    if (data.thought) {
-      const thought = document.createElement('div');
-      thought.className = 'thought';
-      thought.textContent = (data.type === 'error' ? '❌ ' : data.type === 'warning' ? '⚠️ ' : '💭 ') + data.thought;
-      el.appendChild(thought);
-    }
-
-    if (data.action && data.action !== 'done') {
-      const action = document.createElement('div');
-      action.className = 'action';
-      action.textContent = '🔧 ' + data.action + ' ' + JSON.stringify(data.params || {});
-      el.appendChild(action);
-    }
-
-    if (data.observation) {
-      const obs = document.createElement('div');
-      obs.className = 'obs';
-      obs.textContent = '📌 ' + data.observation.slice(0, 300);
-      el.appendChild(obs);
-    }
-
-    thinkingLog.appendChild(el);
-    thinkingLog.scrollTop = thinkingLog.scrollHeight;
-  }
-
-  function clearLog() {
-    thinkingLog.innerHTML = '';
-  }
-
-  // ── Update screenshot ────────────────────────────
-  function updateScreenshot(base64Data) {
-    if (base64Data) {
-      screenshotImg.src = 'data:image/png;base64,' + base64Data;
-      screenshotImg.style.display = 'block';
-      placeholder.style.display = 'none';
-    }
-  }
-
-  // ── Run task ────────────────────────────────────
-  async function runTask() {
-    const task = taskInput.value.trim();
-    if (!task || isRunning) return;
-
-    saveConfig();
-
-    const apiKey = apiKeyInput.value.trim();
-
-    // Clear previous
-    clearLog();
-    placeholder.style.display = 'flex';
-    screenshotImg.style.display = 'none';
-    currentUrl.textContent = 'starting...';
-
-    isRunning = true;
-    runBtn.disabled = true;
-    runBtn.textContent = '⏳ Running...';
-    setStatus('Starting...', true);
-
-    try {
-      const model = modelSelect.value;
-      const baseUrl = MODEL_BASE_URLS[model] || 'https://api.deepseek.com/v1';
-
-      // Start agent
-      const startRes = await fetch('/browser-agent/api/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task: task,
-          api_key: apiKey,
-          base_url: baseUrl,
-          model: model,
-          headless: true,
-        }),
-      });
-
-      // 检查 HTTP 错误状态
-      if (!startRes.ok) {
-        let errMsg = '请求失败';
-        try {
-          const errData = await startRes.json();
-          if (errData.detail) {
-            if (typeof errData.detail === 'object' && errData.detail.message) {
-              errMsg = errData.detail.message;
-            } else if (typeof errData.detail === 'string') {
-              errMsg = errData.detail;
-            }
-          }
-        } catch(e) {
-          // 非 JSON 响应，显示状态码
-          errMsg = `服务器错误 (${startRes.status})`;
-        }
-        addLog({ type: 'error', thought: errMsg });
-        finishRun();
-        return;
-      }
-
-      const startData = await startRes.json();
-      sessionId = startData.session_id;
-
-      // 更新剩余次数
-      if (startData.remaining_free !== undefined) {
-        freeRemaining = startData.remaining_free;
-        updateFreeHint();
-      }
-
-      if (!apiKey) {
-        addLog({ thought: `🎁 免费试用（剩余 ${freeRemaining} 次）任务已启动: "${task}"` });
+    const startData = await startRes.json();
+    sessionId = startData.session_id;
+    if (startData.remaining_free !== undefined) { freeRemaining = startData.remaining_free; updateFreeHint(); }
+    addLog({ thought: '\u{1F4AC} \u4EFB\u52A1\u5DF2\u542F\u52A8: "' + task + '"' });
+    setStatus("Running...", true);
+    eventSource = new EventSource("/browser-agent/api/stream/" + sessionId);
+    eventSource.onmessage = function(event) {
+      let data;
+      try { data = JSON.parse(event.data); } catch(e) { return; }
+      if (data.type === "done") { finishRun(); return; }
+      if (data.type === "error") { addLog({ type: "error", thought: data.content || "\u672A\u77E5\u9519\u8BEF" }); return; }
+      if (data.screenshot) {
+        loadingOverlay.classList.remove("active");
+        updateScreenshot(data.screenshot);
       } else {
-        addLog({ thought: `任务已启动: "${task}"` });
+        loadingOverlay.classList.add("active");
       }
-      setStatus('Running...', true);
-
-      // Connect to SSE stream
-      eventSource = new EventSource(`/browser-agent/api/stream/${sessionId}`);
-
-      eventSource.onmessage = (event) => {
-        let data;
-        try {
-          data = JSON.parse(event.data);
-        } catch(e) {
-          return;
-        }
-
-        if (data.type === 'done') {
-          finishRun();
-          return;
-        }
-
-        if (data.type === 'error') {
-          addLog({ type: 'error', thought: data.content || '未知错误' });
-          return;
-        }
-
-        // Update screenshot
-        if (data.screenshot) {
-          updateScreenshot(data.screenshot);
-        }
-
-        // Update URL
-        if (data.observation && data.observation.startsWith('已导航到:')) {
-          currentUrl.textContent = data.observation.replace('已导航到: ', '');
-        }
-
-        // Add to log
-        addLog(data);
-
-        if (data.done) {
-          addLog({ thought: '✅ ' + (data.observation || '任务完成！') });
+      if (data.observation && data.observation.startsWith("\u5DF2\u5BFC\u822A\u5230:")) {
+        currentUrl.textContent = data.observation.replace("\u5DF2\u5BFC\u822A\u5230: ", "");
+      }
+      addLog(data);
+      if (data.done) { addLog({ thought: "\u2705 " + (data.observation || "\u4EFB\u52A1\u5B8C\u6210\uFF01") }); finishRun(); }
+    };
+    eventSource.onerror = function() {
+      if (!isRunning) return;
+      setTimeout(function() {
+        if (eventSource && eventSource.readyState !== EventSource.OPEN) {
+          addLog({ thought: "\u26A0\uFE0F \u8FDE\u63A5\u5DF2\u65AD\u5F00" });
           finishRun();
         }
-      };
-
-      eventSource.onerror = () => {
-        // 检查剩余次数
-        checkFreeRemaining();
-        addLog({ type: 'error', thought: '⚠️ 连接已断开' });
-        finishRun();
-      };
-
-    } catch (err) {
-      addLog({ type: 'error', thought: '启动失败: ' + err.message });
-      finishRun();
-    }
+      }, 5000);
+    };
+  } catch(e) {
+    addLog({ type: "error", thought: "\u8BF7\u6C42\u51FA\u9519: " + e.message });
+    finishRun();
   }
-
-  function finishRun() {
-    document.getElementById(stopBtn).style.display = none;
-    isRunning = false;
-    runBtn.disabled = false;
-    runBtn.textContent = '▶ Run';
-    setStatus('Ready', false);
-    if (eventSource) {
-      eventSource.close();
-      eventSource = null;
-    }
-    // Check remaining
-    checkFreeRemaining();
-  }
-
-  // ── Init ─────────────────────────────────────────
-  // Check remaining on load
-  checkFreeRemaining();
-  setStatus('Ready', false);
+}
+function finishRun() {
+  isRunning = false; runBtn.disabled = false; runBtn.textContent = "\u25B6 \u8FD0\u884C";
+  loadingOverlay.classList.remove("active");
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  if (sessionId) { fetch("/browser-agent/api/stop/" + sessionId, { method: "POST" }).catch(function(){}); sessionId = null; }
+  setStatus("\u5C31\u7EEA", false);
+}
+runBtn.addEventListener("click", function() {
+  if (isRunning) {
+    if (eventSource) eventSource.close();
+    if (sessionId) { fetch("/browser-agent/api/stop/" + sessionId, { method: "POST" }).catch(function(){}); }
+    finishRun();
+    addLog({ thought: "\u23F9\uFE0F \u7528\u6237\u624B\u52A8\u505C\u6B62" });
+  } else { runTask(); }
+});
+taskInput.addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runTask(); }
+});
+updateFreeHint();
 </script>
 </body>
 </html>

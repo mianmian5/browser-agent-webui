@@ -1,14 +1,37 @@
 #!/usr/bin/env python3
-"""Browser Agent v3 - with loop detection, Wikipedia fallback, stop support"""
+"""Browser Agent v4 — with multi-source search, zh.wikipedia, display stability"""
 import os, base64, json, re, time
 from playwright.async_api import async_playwright
 import sys, httpx, re as _re, json as _json
 from bs4 import BeautifulSoup
+from urllib.parse import quote
 
-# ---------- API Search (no browser needed) ----------
-_SEARCH_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+# ====== Web Search (multi-source, no browser needed) ======
+_SEARCH_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
 
-def _bing_search(query, max_results=3):
+def _remove_unwanted_tags(soup):
+    for t in soup(["script","style","nav","footer","header","aside","noscript","iframe","svg"]):
+        t.decompose()
+    return soup
+
+def _fetch_page_content(url, max_len=3000):
+    """Fetch and extract readable text from a URL"""
+    try:
+        resp = httpx.get(url, headers={"User-Agent": _SEARCH_UA}, timeout=10, follow_redirects=True)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        _remove_unwanted_tags(soup)
+        # Try main content selectors first
+        for sel in ["article", "[role=main]", ".mw-parser-output", ".post-content", "#mw-content-text", "main", ".content"]:
+            el = soup.select_one(sel)
+            if el:
+                text = el.get_text(separator="\n", strip=True)
+                if len(text) > 200:
+                    return text[:max_len]
+        return soup.get_text(separator="\n", strip=True)[:max_len]
+    except:
+        return ""
+
+def _bing_search(query, max_results=4):
     try:
         r = httpx.get("https://www.bing.com/search", params={"q": query, "setlang": "zh-Hans"},
             headers={"User-Agent": _SEARCH_UA, "Accept-Language": "zh-CN,zh;q=0.9"},
@@ -16,59 +39,137 @@ def _bing_search(query, max_results=3):
         soup = BeautifulSoup(r.text, "html.parser")
         results = []
         for el in soup.select(".b_algo")[:max_results]:
-            title = el.select_one("h2 a")
-            snippet = el.select_one(".b_caption p")
-            if title:
-                results.append({"title": title.get_text(strip=True), "url": title.get("href",""),
-                    "snippet": snippet.get_text(strip=True) if snippet else ""})
+            title_el = el.select_one("h2 a")
+            snippet_el = el.select_one(".b_caption p")
+            if title_el:
+                results.append({
+                    "title": title_el.get_text(strip=True),
+                    "url": title_el.get("href",""),
+                    "snippet": snippet_el.get_text(strip=True) if snippet_el else ""
+                })
         return results
-    except Exception as e:
+    except:
         return []
 
-def search_web(task_text):
-    """Real web search using Bing API (no browser needed)"""
-    results = _bing_search(task_text[:60], 3)
-    if not results:
-        return "搜索无结果"
-    parts = [f"搜索结果: {task_text}"]
-    for i, r in enumerate(results, 1):
-        parts.append(f"{i}. {r[chr(116)+chr(105)+chr(116)+chr(108)+chr(101)]}")
-        parts.append(f"   {r[chr(115)+chr(110)+chr(105)+chr(112)+chr(112)+chr(101)+chr(116)]}")
-        parts.append(f"   {r[chr(117)+chr(114)+chr(108)]}")
-        # Fetch content of first result
-        if i == 1 and r.get("url","") and "bing.com" not in r["url"]:
-            try:
-                resp = httpx.get(r["url"], headers={"User-Agent": _SEARCH_UA}, timeout=8)
-                soup = BeautifulSoup(resp.text, "html.parser")
-                for t in soup(["script","style","nav","footer"]): t.decompose()
-                text = soup.get_text(separator="\n", strip=True)[:3000]
-                parts.append(f"\n详细内容:\n{text}")
-            except: pass
-    return "\n".join(parts)
+def _duckduckgo_search(query, max_results=4):
+    """DuckDuckGo search (no API key needed, works in China)"""
+    try:
+        r = httpx.get("https://html.duckduckgo.com/html/", params={"q": query},
+            headers={"User-Agent": _SEARCH_UA},
+            timeout=10, follow_redirects=True)
+        soup = BeautifulSoup(r.text, "html.parser")
+        results = []
+        for el in soup.select(".result")[:max_results]:
+            title_el = el.select_one(".result__title a")
+            snippet_el = el.select_one(".result__snippet")
+            if title_el:
+                results.append({
+                    "title": title_el.get_text(strip=True),
+                    "url": title_el.get("href",""),
+                    "snippet": snippet_el.get_text(strip=True) if snippet_el else ""
+                })
+        return results
+    except:
+        return []
 
+def _baidu_search(query, max_results=4):
+    """Baidu search backup"""
+    try:
+        r = httpx.get("https://www.baidu.com/s", params={"wd": query, "ie": "utf-8"},
+            headers={"User-Agent": _SEARCH_UA, "Accept-Language": "zh-CN,zh;q=0.9"},
+            timeout=10, follow_redirects=True)
+        soup = BeautifulSoup(r.text, "html.parser")
+        results = []
+        for el in soup.select(".result")[:max_results]:
+            title_el = el.select_one("h3 a")
+            snippet_el = el.select_one(".c-abstract") or el.select_one(".content-right_8Zs40")
+            if title_el:
+                results.append({
+                    "title": title_el.get_text(strip=True),
+                    "url": title_el.get("href",""),
+                    "snippet": snippet_el.get_text(strip=True) if snippet_el else ""
+                })
+        return results
+    except:
+        return []
+
+SEARCH_ENGINES = [
+    ("Bing", _bing_search),
+    ("DuckDuckGo", _duckduckgo_search),
+    ("百度", _baidu_search),
+]
+
+def search_web(query):
+    """Multi-engine web search. Returns results from the first engine that returns something."""
+    formatted = f"📌 搜索: {query}\n"
+    attempted = []
+
+    for name, engine in SEARCH_ENGINES:
+        try:
+            results = engine(query)
+            attempted.append(name)
+            if results:
+                formatted += f"  [{name}] 找到 {len(results)} 条结果:\n"
+                for i, r in enumerate(results, 1):
+                    formatted += f"{i}. {r['title']}\n"
+                    if r.get('snippet'):
+                        formatted += f"   {r['snippet']}\n"
+                    formatted += f"   {r['url']}\n"
+                    # Fetch content from first result (skip search engines themselves)
+                    if i == 1 and r.get("url","") and "bing.com" not in r["url"] and "duckduckgo.com" not in r["url"]:
+                        content = _fetch_page_content(r["url"])
+                        if content:
+                            formatted += f"  详细内容: {content[:2000]}\n"
+                return formatted
+        except:
+            pass
+
+    # If all fail, try direct knowledge sources
+    # Try Chinese Wikipedia
+    zh_title = query.replace(" ", "_")
+    zh_url = f"https://zh.wikipedia.org/wiki/{quote(query)}"
+    try:
+        content = _fetch_page_content(zh_url)
+        if content and len(content) > 100:
+            return f"📌 来自维基百科（中文）:\nURL: {zh_url}\n\n{content[:3000]}"
+    except:
+        pass
+
+    # Try Baidu Baike
+    baike_url = f"https://baike.baidu.com/item/{quote(query)}"
+    try:
+        content = _fetch_page_content(baike_url)
+        if content and len(content) > 100:
+            return f"📌 来自百度百科:\nURL: {baike_url}\n\n{content[:3000]}"
+    except:
+        pass
+
+    return f"搜索无结果（已尝试: {', '.join(attempted) if attempted else '无搜索引擎可用'}）"
+
+
+# ====== Prompt ======
 PROMPT_T = """You are a browser automation agent. Complete the user task.
 
 Tools:
+- search(query) - Search the web (recommended FIRST step for finding info)
 - navigate(url) - Go to a URL
-- search(query) - Search the web for information (use this instead of navigate for finding info)
 - click(selector) - Click element
-- type(selector, text) - Type text
-- scroll(direction) - Scroll
-- wait(ms) - Wait
-- extract(selector) - Get text from page
-- done(answer) - Task complete
+- type(selector, text) - Type text into input
+- scroll(direction) - Scroll page (up/down)
+- wait(ms) - Wait milliseconds
+- extract(selector) - Get text content (default: "body" for whole page)
+- done(answer) - Task complete with final answer
 
 Rules:
-1. Use Chinese for thoughts
-2. For factual questions, use search(query) - it returns real content
-3. After search() gives you results, use done() to answer with those results
-4. Do NOT navigate/click on search result links (they require login or have anti-bot)
-5. The search() results already contain the information you need (en.wikipedia.org)
-3. If a page shows "Bad Request" or error, try Wikipedia instead
-4. After navigating, use extract("body") to read the page content
-5. Summarize from what you have - do NOT keep searching for perfect results
-6. If same action repeated >=3 times, mark done with what you have
-7. Execute one action at a time. Use done() when you have enough info.
+1. Always think in Chinese
+2. When user asks a factual question → FIRST use search(query) - it returns real content from multiple search engines
+3. search() already fetches the FULL page content for you - you can answer directly from it
+4. After getting search results, use done() to present the answer - don't keep searching
+5. Wikipedia is blocked in China. Use search() to find info instead of navigating to wikipedia.org
+6. If you navigate to a page and see "Bad Request" or error, use search() instead
+7. If an action repeats >=3 times, done() with what you have
+8. For lists (like "历年获奖者"), search() may need a specific query - try different phrasing
+9. After search() gives results, answer from them. Do NOT click on search result links.
 
 Current: __URL__ | Title: __TITLE__
 History:
@@ -76,22 +177,24 @@ __HISTORY__
 
 Task: __TASK__
 
-Reply ONLY this JSON:
-{"thought":"思考","action":"navigate/click/type/scroll/wait/extract/done","params":{}}
+Reply ONLY this JSON (no markdown):
+{"thought":"你的思考","action":"search/navigate/click/type/scroll/wait/extract/done","params":{}}
 """
+
 
 async def call_llm(api_key, base_url, model, prompt):
     import httpx
     hdrs = {"Authorization": "Bearer " + api_key, "Content-Type": "application/json"}
-    payload = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 2048}
+    payload = {"model": model, "messages": [{"role": "user", "content": prompt}],
+               "temperature": 0.1, "max_tokens": 2048}
     try:
         async with httpx.AsyncClient(timeout=120) as c:
             r = await c.post(base_url.rstrip("/") + "/chat/completions", headers=hdrs, json=payload)
             if r.status_code != 200:
-                return '{"thought":"API err","action":"done","params":{"answer":"API ' + str(r.status_code) + '"}}'
+                return '{"thought":"API错误","action":"done","params":{"answer":"API ' + str(r.status_code) + '"}}'
             return r.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        return '{"thought":"API fail","action":"done","params":{"answer":"' + str(e)[:200] + '"}}'
+        return '{"thought":"API连接失败","action":"done","params":{"answer":"' + str(e)[:200] + '"}}'
 
 
 def parse_json(text):
@@ -115,7 +218,8 @@ def parse_json(text):
 
 
 class BrowserAgent:
-    def __init__(self, llm_api_key, llm_base_url="https://api.openai.com/v1", llm_model="gpt-4o", headless=True):
+    def __init__(self, llm_api_key, llm_base_url="https://api.openai.com/v1",
+                 llm_model="gpt-4o", headless=True):
         self.llm_api_key = llm_api_key
         self.llm_base_url = llm_base_url.rstrip("/")
         self.llm_model = llm_model
@@ -150,8 +254,11 @@ class BrowserAgent:
         self.browser = await self.playwright.chromium.launch(
             headless=self.headless,
             args=["--no-sandbox", "--disable-setuid-sandbox",
-                  "--disable-blink-features=AutomationControlled"])
-        ctx = await self.browser.new_context(viewport={"width": 1280, "height": 800})
+                  "--disable-blink-features=AutomationControlled",
+                  "--disable-gpu", "--disable-software-rasterizer"])
+        ctx = await self.browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent=_SEARCH_UA)
         await ctx.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         self.page = await ctx.new_page()
@@ -173,20 +280,6 @@ class BrowserAgent:
             self.last_action_key = key
         return self.repeat_count >= 3
 
-    async def _try_wikipedia_fallback(self, task):
-        """When Bing/other returns Bad Request, try Wikipedia"""
-        q = task.replace("搜索", "").replace("帮我", "").replace(" ", "").strip()
-        if not q: q = task[:30]
-        wiki_url = "https://en.wikipedia.org/wiki/" + q.replace(" ", "_")
-        try:
-            await self.page.goto(wiki_url, wait_until="domcontentloaded", timeout=15000)
-            await self.page.wait_for_timeout(2000)
-            text = await self.page.evaluate("document.body.innerText")
-            preview = text[:3000] if text else ""
-            return wiki_url, preview
-        except:
-            return None, None
-
     async def run_step(self, task):
         if self.stopped:
             await self._cleanup()
@@ -198,19 +291,18 @@ class BrowserAgent:
             url = self.page.url
             title = await self.page.title()
         except:
-            return {"type": "error", "content": "Browser error"}
+            return {"type": "error", "content": "浏览器状态异常"}
 
-        # Bad Request detection -> Wikipedia fallback
+        # Bad Request detection -> use search instead of navigating
         if "Bad Request" in title or "400" in url or "error" in title.lower():
-            wiki_url, wiki_text = await self._try_wikipedia_fallback(task)
-            if wiki_url:
-                obs = f"已改用 Wikipedia: {wiki_url}"
-                self.history.append({"action": "navigate", "thought": "Fallback to Wikipedia",
-                                     "params": {"url": wiki_url}, "result": obs})
-                return {"type": "action", "thought": "Bing被屏蔽，已切换到Wikipedia",
-                        "action": "navigate", "observation": obs, "done": False}
+            # Use search() as fallback
+            search_result = search_web(task[:100])
+            return {"type": "action",
+                    "thought": "页面出错，改用搜索获取信息",
+                    "action": "search",
+                    "observation": search_result[:2000],
+                    "done": False}
 
-        # Build history prompt
         hist_lines = [f"[{h.get('action','?')}] {h.get('result','')[:200]}"
                       for h in self.history[-8:]]
         prompt = PROMPT_T
@@ -222,26 +314,28 @@ class BrowserAgent:
         ad = parse_json(result)
 
         if not ad:
-            return {"type": "error", "content": "LLM parse error: " + result[:200]}
+            return {"type": "error", "content": "LLM解析错误: " + result[:200]}
 
         action = ad.get("action", "")
         params = ad.get("params", {})
         thought = ad.get("thought", "")
         obs = ""
 
-        # Loop detection + stop check
         if self.stopped:
             obs = "用户已停止"
             action, params = "done", {"answer": obs}
         elif self._is_looping(action, url):
-            obs = "检测到重复操作，自动完成当前任务"
+            obs = "检测到重复操作，自动完成"
             action, params = "done", {"answer": f"已尽力完成: {self.initial_task[:50]}"}
 
         try:
             if action == "navigate":
                 t = params.get("url", "about:blank")
-                await self.page.goto(t, wait_until="domcontentloaded", timeout=20000)
-                await self.page.wait_for_timeout(2000)
+                try:
+                    await self.page.goto(t, wait_until="domcontentloaded", timeout=20000)
+                    await self.page.wait_for_timeout(1000)
+                except:
+                    pass
                 obs = "已导航到: " + self.page.url
 
             elif action == "click":
@@ -251,7 +345,7 @@ class BrowserAgent:
                         loc = self.page.locator(sel)
                         if await loc.count() > 0:
                             await loc.first.click(timeout=3000)
-                            await self.page.wait_for_timeout(2000)
+                            await self.page.wait_for_timeout(1500)
                             obs = "已点击: " + sel
                             break
                     except: continue
@@ -266,7 +360,7 @@ class BrowserAgent:
                         if await loc.count() > 0:
                             await loc.first.fill(t, timeout=3000)
                             await self.page.keyboard.press("Enter")
-                            await self.page.wait_for_timeout(2000)
+                            await self.page.wait_for_timeout(1500)
                             tried = True
                             obs = "已输入: " + t[:80]
                             break
@@ -275,8 +369,9 @@ class BrowserAgent:
 
             elif action == "scroll":
                 d = params.get("direction", "down")
-                if d == "down": await self.page.evaluate("window.scrollBy(0, window.innerHeight)")
-                else: await self.page.evaluate("window.scrollBy(0, -window.innerHeight)")
+                await self.page.evaluate(
+                    f"window.scrollBy(0, {'window.innerHeight' if d=='down' else '-window.innerHeight'})")
+                await self.page.wait_for_timeout(500)
                 obs = "已滚动: " + d
 
             elif action == "wait":
@@ -285,9 +380,13 @@ class BrowserAgent:
                 obs = "已等待: " + str(ms) + "ms"
 
             elif action == "extract":
+                sel = params.get("selector", "body")
                 try:
-                    text = await self.page.evaluate("document.body.innerText")
-                    obs = "页面内容: " + text[:1500]
+                    text = await self.page.evaluate(
+                        f"document.querySelector({json.dumps(sel)})?.innerText || ''")
+                    if not text:
+                        text = await self.page.evaluate("document.body.innerText")
+                    obs = "页面内容: " + text[:2000]
                 except:
                     obs = "提取失败"
 
@@ -295,23 +394,23 @@ class BrowserAgent:
                 obs = params.get("answer", "任务完成")
 
             elif action == "search":
-                # API-based search (no browser needed)
                 q = params.get("query", "") or params.get("text", "") or params.get("url", "")
-                if not q: q = task[:60]
-                search_result = search_web(q)
-                obs = search_result[:2000]
-                # Also create a log entry
-                self.history.append({"action": "search_result", "thought": "搜索完成", "params": {}, "result": obs})
+                if not q: q = task[:100]
+                obs = search_web(q)[:3000]
 
             elif action in ("go", "open", "goto"):
                 u = params.get("url", "") or params.get("query", "") or params.get("text", "")
                 if u:
                     if not u.startswith("http"):
-                        u = "https://en.wikipedia.org/wiki/" + u.replace(" ", "_")
-                    await self.page.goto(u, wait_until="domcontentloaded", timeout=15000)
-                    await self.page.wait_for_timeout(1000)
+                        u = "https://zh.wikipedia.org/wiki/" + u.replace(" ", "_")
+                    try:
+                        await self.page.goto(u, wait_until="domcontentloaded", timeout=15000)
+                        await self.page.wait_for_timeout(1000)
+                    except:
+                        pass
                     obs = "已导航到: " + self.page.url
-                else: obs = "未知动作: " + action
+                else:
+                    obs = "未知动作: " + action
 
             else:
                 obs = "未知动作: " + action
