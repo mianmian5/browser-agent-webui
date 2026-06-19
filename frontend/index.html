@@ -255,6 +255,7 @@ const logFreeHint = document.getElementById("logFreeHint");
 let eventSource = null;
 let sessionId = null;
 let isRunning = false;
+let completed = false;
 let freeRemaining = 5;
 let lastScreenshot = "";
 
@@ -362,7 +363,7 @@ async function runTask() {
     eventSource.onmessage = function(event) {
       let data;
       try { data = JSON.parse(event.data); } catch(e) { return; }
-      if (data.type === "done") { finishRun(); return; }
+      if (data.type === "done") { completed = true; finishRun(); return; }
       if (data.type === "error") { addLog({ type: "error", thought: data.content || "\u672A\u77E5\u9519\u8BEF" }); return; }
       if (data.screenshot) {
         loadingOverlay.classList.remove("active");
@@ -374,14 +375,9 @@ async function runTask() {
         currentUrl.textContent = data.observation.replace("\u5DF2\u5BFC\u822A\u5230: ", "");
       }
       addLog(data);
-      if (data.done) { addLog({ thought: "\u2705 " + (data.observation || "\u4EFB\u52A1\u5B8C\u6210\uFF01") }); finishRun(); }
+      if (data.done) { completed = true; addLog({ thought: "\u2705 " + (data.observation || "\u4EFB\u52A1\u5B8C\u6210\uFF01") }); finishRun(); }
     };
-    eventSource.onerror = function() {
-      if (!isRunning) return;
-      setTimeout(function() {
-        if (eventSource && eventSource.readyState !== EventSource.OPEN) {
-          addLog({ thought: "\u26A0\uFE0F \u8FDE\u63A5\u5DF2\u65AD\u5F00" });
-          finishRun();
+eventSource.onerror = function() {      if (completed) return;      addLog({ thought: "\u26A0\uFE0F \u8FDE\u63A5\u5DF2\u65AD\u5F00" });      completed = true;      finishRun();    }
         }
       }, 5000);
     };
@@ -391,6 +387,7 @@ async function runTask() {
   }
 }
 function finishRun() {
+  completed = true;
   isRunning = false; runBtn.disabled = false; runBtn.textContent = "\u25B6 \u8FD0\u884C";
   loadingOverlay.classList.remove("active");
   if (eventSource) { eventSource.close(); eventSource = null; }
